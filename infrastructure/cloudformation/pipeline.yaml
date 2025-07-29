@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Real-time click analytics pipeline
+
+Resources:
+  ClickStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: click-stream
+      ShardCount: 1
+      RetentionPeriodHours: 24
+
+  ClickTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: user-clicks
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: expiry_time
+        Enabled: true
+
+  ClickProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: click-processor
+      Runtime: python3.9
+      Handler: app.lambda_handler
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda/processor.zip
+      Environment:
+        Variables:
+          DYNAMO_TABLE: !Ref ClickTable
+          ALERT_TOPIC_ARN: !Ref AlertTopic
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt ClickTable.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                Resource: !GetAtt ClickStream.Arn
